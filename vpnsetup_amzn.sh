@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Script for automatic setup of an IPsec VPN server on CentOS and RHEL
+# Script for automatic setup of an IPsec VPN server on Amazon Linux 2
 # Works on any dedicated server or virtual private server (VPS)
 #
 # DO NOT RUN THIS SCRIPT ON YOUR PC OR MAC!
@@ -8,8 +8,7 @@
 # The latest version of this script is available at:
 # https://github.com/hwdsl2/setup-ipsec-vpn
 #
-# Copyright (C) 2015-2021 Lin Song <linsongui@gmail.com>
-# Based on the work of Thomas Sarlandie (Copyright 2012)
+# Copyright (C) 2020-2021 Lin Song <linsongui@gmail.com>
 #
 # This work is licensed under the Creative Commons Attribution-ShareAlike 3.0
 # Unported License: http://creativecommons.org/licenses/by-sa/3.0/
@@ -49,27 +48,12 @@ check_ip() {
 
 vpnsetup() {
 
-os_type=centos
 os_arch=$(uname -m | tr -dc 'A-Za-z0-9_-')
-rh_file="/etc/redhat-release"
-if grep -qs "Red Hat" "$rh_file"; then
-  os_type=rhel
-fi
-if grep -qs "release 7" "$rh_file"; then
-  os_ver=7
-elif grep -qs "release 8" "$rh_file"; then
-  os_ver=8
-  if grep -qi stream "$rh_file"; then
-    os_ver=8s
-  fi
-else
-  echo "Error: This script only supports CentOS/RHEL 7 and 8." >&2
+if ! grep -qs "Amazon Linux release 2" /etc/system-release; then
+  echo "Error: This script only supports Amazon Linux 2." >&2
   echo "For Ubuntu/Debian, use https://git.io/vpnsetup" >&2
+  echo "For CentOS/RHEL, use https://git.io/vpnsetup-centos" >&2
   exit 1
-fi
-
-if [ -f /proc/user_beancounters ]; then
-  exiterr "OpenVZ VPS is not supported."
 fi
 
 if [ "$(id -u)" != 0 ]; then
@@ -147,64 +131,31 @@ check_ip "$public_ip" || exiterr "Cannot detect this server's public IP. Edit th
 
 bigecho "Adding the EPEL repository..."
 
-epel_url="https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E '%{rhel}').noarch.rpm"
 (
   set -x
-  yum -y -q install epel-release >/dev/null || yum -y -q install "$epel_url" >/dev/null
+  amazon-linux-extras install epel -y >/dev/null
 ) || exiterr2
 
 bigecho "Installing packages required for the VPN..."
-
-erp="--enablerepo"
-rp1="$erp=epel"
-rp2="$erp=*server-*optional*"
-rp3="$erp=*releases-optional*"
-rp4="$erp=[Pp]ower[Tt]ools"
-[ "$os_type" = "rhel" ] && rp4="$erp=codeready-builder-for-rhel-8-*"
 
 (
   set -x
   yum -y -q install nss-devel nspr-devel pkgconfig pam-devel \
     libcap-ng-devel libselinux-devel curl-devel nss-tools \
-    flex bison gcc make util-linux ppp >/dev/null
+    flex bison gcc make util-linux ppp \
+    systemd-devel iptables-services \
+    libevent-devel fipscheck-devel >/dev/null
 ) || exiterr2
 (
   set -x
-  yum "$rp1" -y -q install xl2tpd >/dev/null 2>&1
+  yum --enablerepo=epel -y -q install xl2tpd >/dev/null 2>&1
 ) || exiterr2
-
-use_nft=0
-p1=systemd-devel
-p2=libevent-devel
-p3=fipscheck-devel
-p4=iptables-services
-if [ "$os_ver" = "7" ]; then
-  (
-    set -x
-    yum "$rp2" "$rp3" -y -q install $p1 $p2 $p3 $p4 >/dev/null
-  ) || exiterr2
-else
-  (
-    set -x
-    yum "$rp4" -y -q install $p1 $p2 $p3 >/dev/null
-  ) || exiterr2
-  if systemctl is-active --quiet firewalld \
-    || systemctl is-active --quiet nftables \
-    || grep -qs "hwdsl2 VPN script" /etc/sysconfig/nftables.conf; then
-    use_nft=1
-    p4=nftables
-  fi
-  (
-    set -x
-    yum -y -q install $p4 >/dev/null
-  ) || exiterr2
-fi
 
 bigecho "Installing Fail2Ban to protect SSH..."
 
 (
   set -x
-  yum "$rp1" -y -q install fail2ban >/dev/null
+  yum --enablerepo=epel -y -q install fail2ban >/dev/null
 ) || exiterr2
 
 bigecho "Downloading IKEv2 script..."
@@ -410,24 +361,13 @@ cat > "$F2B_FILE" <<'EOF'
 enabled = true
 filter = sshd
 logpath = /var/log/secure
-EOF
-
-  if [ "$use_nft" = "1" ]; then
-cat >> "$F2B_FILE" <<'EOF'
-port = ssh
-banaction = nftables-multiport[blocktype=drop]
-EOF
-  else
-cat >> "$F2B_FILE" <<'EOF'
 action = iptables[name=SSH, port=ssh, protocol=tcp]
 EOF
-  fi
 fi
 
 bigecho "Updating IPTables rules..."
 
 IPT_FILE=/etc/sysconfig/iptables
-[ "$use_nft" = "1" ] && IPT_FILE=/etc/sysconfig/nftables.conf
 ipt_flag=0
 if ! grep -qs "hwdsl2 VPN script" "$IPT_FILE"; then
   ipt_flag=1
@@ -435,12 +375,7 @@ fi
 
 if [ "$ipt_flag" = "1" ]; then
   service fail2ban stop >/dev/null 2>&1
-  if [ "$use_nft" = "1" ]; then
-    nft list ruleset > "$IPT_FILE.old-$SYS_DT"
-    chmod 600 "$IPT_FILE.old-$SYS_DT"
-  else
-    iptables-save > "$IPT_FILE.old-$SYS_DT"
-  fi
+  iptables-save > "$IPT_FILE.old-$SYS_DT"
   iptables -I INPUT 1 -p udp --dport 1701 -m policy --dir in --pol none -j DROP
   iptables -I INPUT 2 -m conntrack --ctstate INVALID -j DROP
   iptables -I INPUT 3 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -457,32 +392,13 @@ if [ "$ipt_flag" = "1" ]; then
   iptables -t nat -I POSTROUTING -s "$XAUTH_NET" -o "$NET_IFACE" -m policy --dir out --pol none -j MASQUERADE
   iptables -t nat -I POSTROUTING -s "$L2TP_NET" -o "$NET_IFACE" -j MASQUERADE
   echo "# Modified by hwdsl2 VPN script" > "$IPT_FILE"
-  if [ "$use_nft" = "1" ]; then
-    for vport in 500 4500 1701; do
-      nft insert rule inet firewalld filter_INPUT udp dport "$vport" accept 2>/dev/null
-      nft insert rule inet nftables_svc allow udp dport "$vport" accept 2>/dev/null
-    done
-    for vnet in "$L2TP_NET" "$XAUTH_NET"; do
-      for vdir in saddr daddr; do
-        nft insert rule inet firewalld filter_FORWARD ip "$vdir" "$vnet" accept 2>/dev/null
-        nft insert rule inet nftables_svc FORWARD ip "$vdir" "$vnet" accept 2>/dev/null
-      done
-    done
-    echo "flush ruleset" >> "$IPT_FILE"
-    nft list ruleset >> "$IPT_FILE"
-  else
-    iptables-save >> "$IPT_FILE"
-  fi
+  iptables-save >> "$IPT_FILE"
 fi
 
 bigecho "Enabling services on boot..."
 
 systemctl --now mask firewalld 2>/dev/null
-if [ "$use_nft" = "1" ]; then
-  systemctl enable nftables fail2ban 2>/dev/null
-else
-  systemctl enable iptables fail2ban 2>/dev/null
-fi
+systemctl enable iptables fail2ban 2>/dev/null
 
 if ! grep -qs "hwdsl2 VPN script" /etc/rc.local; then
   if [ -f /etc/rc.local ]; then
@@ -511,11 +427,7 @@ sysctl -e -q -p
 chmod +x /etc/rc.local
 chmod 600 /etc/ipsec.secrets* /etc/ppp/chap-secrets* /etc/ipsec.d/passwd*
 
-if [ "$use_nft" = "1" ]; then
-  nft -f "$IPT_FILE"
-else
-  iptables-restore < "$IPT_FILE"
-fi
+iptables-restore < "$IPT_FILE"
 
 # Fix xl2tpd if l2tp_ppp is unavailable
 if ! modprobe -q l2tp_ppp; then
@@ -528,7 +440,7 @@ service fail2ban restart 2>/dev/null
 service ipsec restart 2>/dev/null
 service xl2tpd restart 2>/dev/null
 
-swan_ver_url="https://dl.ls20.com/v1/$os_type/$os_ver/swanver?arch=$os_arch&ver=$SWAN_VER"
+swan_ver_url="https://dl.ls20.com/v1/amzn/2/swanver?arch=$os_arch&ver=$SWAN_VER"
 swan_ver_latest=$(wget -t 3 -T 15 -qO- "$swan_ver_url")
 if printf '%s' "$swan_ver_latest" | grep -Eq '^([3-9]|[1-9][0-9]{1,2})(\.([0-9]|[1-9][0-9]{1,2})){1,2}$' \
   && [ -n "$SWAN_VER" ] && [ "$SWAN_VER" != "$swan_ver_latest" ] \
@@ -537,7 +449,7 @@ cat <<EOF
 
 Note: A newer version of Libreswan ($swan_ver_latest) is available.
       To update, run:
-      wget https://git.io/vpnupgrade-centos -O vpnup.sh && sudo sh vpnup.sh
+      wget https://git.io/vpnupgrade-amzn -O vpnup.sh && sudo sh vpnup.sh
 EOF
 fi
 

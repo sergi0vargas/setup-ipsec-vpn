@@ -1,11 +1,11 @@
 #!/bin/sh
 #
-# Script to upgrade Libreswan on Ubuntu and Debian
+# Script to upgrade Libreswan on Amazon Linux 2
 #
 # The latest version of this script is available at:
 # https://github.com/hwdsl2/setup-ipsec-vpn
 #
-# Copyright (C) 2016-2021 Lin Song <linsongui@gmail.com>
+# Copyright (C) 2020-2021 Lin Song <linsongui@gmail.com>
 #
 # This work is licensed under the Creative Commons Attribution-ShareAlike 3.0
 # Unported License: http://creativecommons.org/licenses/by-sa/3.0/
@@ -21,38 +21,17 @@ SWAN_VER=4.4
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 exiterr()  { echo "Error: $1" >&2; exit 1; }
-exiterr2() { exiterr "'apt-get install' failed."; }
+exiterr2() { exiterr "'yum install' failed."; }
 bigecho() { echo "## $1"; }
 
 vpnupgrade() {
 
-os_type=$(lsb_release -si 2>/dev/null)
 os_arch=$(uname -m | tr -dc 'A-Za-z0-9_-')
-[ -z "$os_type" ] && [ -f /etc/os-release ] && os_type=$(. /etc/os-release && printf '%s' "$ID")
-case $os_type in
-  [Uu]buntu)
-    os_type=ubuntu
-    ;;
-  [Dd]ebian)
-    os_type=debian
-    ;;
-  [Rr]aspbian)
-    os_type=raspbian
-    ;;
-  *)
-    echo "Error: This script only supports Ubuntu and Debian." >&2
-    echo "For CentOS/RHEL, use https://git.io/vpnupgrade-centos" >&2
-    exit 1
-    ;;
-esac
-
-os_ver=$(sed 's/\..*//' /etc/debian_version | tr -dc 'A-Za-z0-9')
-if [ "$os_ver" = "8" ] || [ "$os_ver" = "jessiesid" ]; then
-  exiterr "Debian 8 or Ubuntu < 16.04 is not supported."
-fi
-
-if [ -f /proc/user_beancounters ]; then
-  exiterr "OpenVZ VPS is not supported."
+if ! grep -qs "Amazon Linux release 2" /etc/system-release; then
+  echo "Error: This script only supports Amazon Linux 2." >&2
+  echo "For Ubuntu/Debian, use https://git.io/vpnupgrade" >&2
+  echo "For CentOS/RHEL, use https://git.io/vpnupgrade-centos" >&2
+  exit 1
 fi
 
 if [ "$(id -u)" != 0 ]; then
@@ -84,14 +63,14 @@ EOF
 fi
 
 swan_ver_cur=4.4
-swan_ver_url="https://dl.ls20.com/v1/$os_type/$os_ver/swanverupg?arch=$os_arch&ver1=$swan_ver_old&ver2=$SWAN_VER"
+swan_ver_url="https://dl.ls20.com/v1/amzn/2/swanverupg?arch=$os_arch&ver1=$swan_ver_old&ver2=$SWAN_VER"
 swan_ver_latest=$(wget -t 3 -T 15 -qO- "$swan_ver_url")
 if printf '%s' "$swan_ver_latest" | grep -Eq '^([3-9]|[1-9][0-9]{1,2})(\.([0-9]|[1-9][0-9]{1,2})){1,2}$' \
   && [ "$swan_ver_cur" != "$swan_ver_latest" ] \
   && printf '%s\n%s' "$swan_ver_cur" "$swan_ver_latest" | sort -C -V; then
   echo "Note: A newer version of Libreswan ($swan_ver_latest) is available."
   echo "      To update to the new version, exit this script and run:"
-  echo "      wget https://git.io/vpnupgrade -O vpnup.sh && sudo sh vpnup.sh"
+  echo "      wget https://git.io/vpnupgrade-amzn -O vpnup.sh && sudo sh vpnup.sh"
   echo
   printf "Do you want to continue anyway? [y/N] "
   read -r response
@@ -170,17 +149,12 @@ cd /opt/src || exit 1
 
 bigecho "Installing required packages..."
 
-export DEBIAN_FRONTEND=noninteractive
 (
   set -x
-  apt-get -yqq update
-) || exiterr "'apt-get update' failed."
-(
-  set -x
-  apt-get -yqq install libnss3-dev libnspr4-dev pkg-config \
-    libpam0g-dev libcap-ng-dev libcap-ng-utils libselinux1-dev \
-    libcurl4-nss-dev libnss3-tools libevent-dev libsystemd-dev \
-    flex bison gcc make wget sed >/dev/null
+  yum -y -q install nss-devel nspr-devel pkgconfig pam-devel \
+    libcap-ng-devel libselinux-devel curl-devel nss-tools \
+    flex bison gcc make wget sed tar \
+    systemd-devel libevent-devel fipscheck-devel >/dev/null
 ) || exiterr2
 
 bigecho "Downloading Libreswan..."
@@ -203,14 +177,6 @@ cat > Makefile.inc.local <<'EOF'
 WERROR_CFLAGS=-w
 USE_DNSSEC=false
 EOF
-if [ "$SWAN_VER" = "3.32" ] || ! grep -qs 'VERSION_CODENAME=' /etc/os-release; then
-cat >> Makefile.inc.local <<'EOF'
-USE_DH31=false
-USE_NSS_AVA_COPY=true
-USE_NSS_IPSEC_PROFILE=false
-USE_GLIBC_KERN_FLIP_HEADERS=true
-EOF
-fi
 echo "USE_DH2=true" >> Makefile.inc.local
 if ! grep -qs IFLA_XFRM_LINK /usr/include/linux/if_link.h; then
   echo "USE_XFRM_INTERFACE_IFLA_HEADER=true" >> Makefile.inc.local
@@ -232,16 +198,15 @@ if ! /usr/local/sbin/ipsec --version 2>/dev/null | grep -qF "$SWAN_VER"; then
   exiterr "Libreswan $SWAN_VER failed to build."
 fi
 
+# Restore SELinux contexts
+restorecon /etc/ipsec.d/*db 2>/dev/null
+restorecon /usr/local/sbin -Rv 2>/dev/null
+restorecon /usr/local/libexec/ipsec -Rv 2>/dev/null
+
 bigecho "Updating VPN configuration..."
 
 IKE_NEW="  ike=aes256-sha2,aes128-sha2,aes256-sha1,aes128-sha1,aes256-sha2;modp1024,aes128-sha1;modp1024"
 PHASE2_NEW="  phase2alg=aes_gcm-null,aes128-sha1,aes256-sha1,aes256-sha2_512,aes128-sha2,aes256-sha2"
-
-if uname -m | grep -qi '^arm'; then
-  if ! modprobe -q sha512; then
-    PHASE2_NEW="  phase2alg=aes_gcm-null,aes128-sha1,aes256-sha1,aes128-sha2,aes256-sha2"
-  fi
-fi
 
 dns_state=0
 DNS_SRV1=$(grep "modecfgdns1=" /etc/ipsec.conf | head -n 1 | cut -d '=' -f 2)

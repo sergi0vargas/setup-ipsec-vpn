@@ -25,26 +25,25 @@ rm -f /etc/init/ipsec.conf /lib/systemd/system/ipsec.service \
 
 ## 第二步
 
-### Ubuntu/Debian
+### Ubuntu & Debian
 
 `apt-get purge xl2tpd`
 
-### CentOS/RHEL
+### CentOS/RHEL & Amazon Linux 2
 
 `yum remove xl2tpd`
 
 ## 第三步
 
-### Ubuntu/Debian
+### Ubuntu & Debian
 
-编辑 `/etc/iptables.rules` 并删除不需要的规则。   
-你以前的防火墙规则（如果有）会备份在 `/etc/iptables.rules.old-日期-时间`。   
-另外如果文件 `/etc/iptables/rules.v4` 存在，请编辑它。   
+编辑 `/etc/iptables.rules` 并删除不需要的规则。你之前的防火墙规则（如果有）备份在 `/etc/iptables.rules.old-日期-时间`。另外如果文件 `/etc/iptables/rules.v4` 存在，请编辑它。
 
-### CentOS/RHEL
+### CentOS/RHEL & Amazon Linux 2
 
-编辑 `/etc/sysconfig/iptables` 并删除不需要的规则。   
-你以前的防火墙规则（如果有）会备份在 `/etc/sysconfig/iptables.old-日期-时间`。   
+编辑 `/etc/sysconfig/iptables` 并删除不需要的规则。你之前的防火墙规则（如果有）备份在 `/etc/sysconfig/iptables.old-日期-时间`。
+
+**注：** 如果使用 CentOS/RHEL 8 并且在安装 VPN 时 firewalld 正在运行，则可能已配置 nftables。编辑 `/etc/sysconfig/nftables.conf` 并删除不需要的规则。你之前的防火墙规则备份在 `/etc/sysconfig/nftables.conf.old-日期-时间`。
 
 ## 第四步
 
@@ -53,7 +52,7 @@ rm -f /etc/init/ipsec.conf /lib/systemd/system/ipsec.service \
 
 ## 可选步骤
 
-注： 这一步是可选的。
+**注：** 这一步是可选的。
 
 删除这些配置文件：
 
@@ -78,3 +77,11 @@ rm -rf /etc/ipsec.d /etc/xl2tpd
 ## 完成后
 
 重启你的服务器。
+
+## 授权协议
+
+版权所有 (C) 2016-2021 <a href="https://www.linkedin.com/in/linsongui" target="_blank">Lin Song</a>   
+
+<a rel="license" href="http://creativecommons.org/licenses/by-sa/3.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/3.0/88x31.png" /></a>   
+这个项目是以 <a href="http://creativecommons.org/licenses/by-sa/3.0/" target="_blank">知识共享署名-相同方式共享3.0</a> 许可协议授权。   
+必须署名： 请包括我的名字在任何衍生产品，并且让我知道你是如何改善它的！

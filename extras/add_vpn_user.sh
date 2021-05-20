@@ -2,7 +2,7 @@
 #
 # Script to add/update an VPN user for both IPsec/L2TP and Cisco IPsec
 #
-# Copyright (C) 2018-2020 Lin Song <linsongui@gmail.com>
+# Copyright (C) 2018-2021 Lin Song <linsongui@gmail.com>
 #
 # This work is licensed under the Creative Commons Attribution-ShareAlike 3.0
 # Unported License: http://creativecommons.org/licenses/by-sa/3.0/
@@ -11,7 +11,7 @@
 # know how you have improved it!
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-SYS_DT=$(date +%F-%T)
+SYS_DT=$(date +%F-%T | tr ':' '_')
 
 exiterr()  { echo "Error: $1" >&2; exit 1; }
 conf_bk() { /bin/cp -f "$1" "$1.old-$SYS_DT" 2>/dev/null; }
@@ -22,29 +22,24 @@ if [ "$(id -u)" != 0 ]; then
   exiterr "Script must be run as root. Try 'sudo sh $0'"
 fi
 
-if [ ! -f "/etc/ppp/chap-secrets" ] || [ ! -f "/etc/ipsec.d/passwd" ]; then
+if ! grep -qs "hwdsl2 VPN script" /etc/sysctl.conf \
+  || [ ! -f /etc/ppp/chap-secrets ] || [ ! -f /etc/ipsec.d/passwd ]; then
 cat 1>&2 <<'EOF'
-Error: File /etc/ppp/chap-secrets and/or /etc/ipsec.d/passwd do not exist!
-       Your must first set up the VPN server before adding VPN users.
+Error: Your must first set up the IPsec VPN server before adding VPN users.
        See: https://github.com/hwdsl2/setup-ipsec-vpn
 EOF
   exit 1
 fi
 
-if ! grep -qs "hwdsl2 VPN script" /etc/sysctl.conf; then
-cat 1>&2 <<'EOF'
-Error: This script can only be used with VPN servers created using:
-       https://github.com/hwdsl2/setup-ipsec-vpn
-EOF
-  exit 1
-fi
+command -v openssl >/dev/null 2>&1 || exiterr "'openssl' not found. Abort."
 
 VPN_USER=$1
 VPN_PASSWORD=$2
 
 if [ -z "$VPN_USER" ] || [ -z "$VPN_PASSWORD" ]; then
 cat 1>&2 <<EOF
-Usage: sudo sh $0 'username_to_add' 'password_to_add'
+Usage: sudo sh $0 'username_to_add' 'password'
+       sudo sh $0 'username_to_update' 'new_password'
 EOF
   exit 1
 fi
@@ -63,11 +58,11 @@ clear
 
 cat <<EOF
 
-Welcome! This script will add or update an VPN user account
-for both IPsec/L2TP and IPsec/XAuth (Cisco IPsec).
+Welcome! This script will add or update an VPN user account for both
+IPsec/L2TP and IPsec/XAuth ("Cisco IPsec") modes.
 
-If the username you specified matches an existing VPN user,
-that user will be updated with the new password.
+If the username you specified already exists, it will be updated
+with the new password. Otherwise, a new VPN user will be added.
 
 Please double check before continuing!
 
@@ -80,11 +75,14 @@ Password: $VPN_PASSWORD
 
 Write these down. You'll need them to connect!
 
+Important notes:   https://git.io/vpnnotes
+Setup VPN clients: https://git.io/vpnclients
+
 ================================================
 
 EOF
 
-printf "Do you wish to continue? [y/N] "
+printf "Do you want to continue? [y/N] "
 read -r response
 case $response in
   [yY][eE][sS]|[yY])
@@ -93,9 +91,7 @@ case $response in
     echo
     ;;
   *)
-    echo
-    echo "Aborting. No changes were made."
-    echo
+    echo "Abort. No changes were made."
     exit 1
     ;;
 esac
@@ -123,8 +119,8 @@ chmod 600 /etc/ppp/chap-secrets* /etc/ipsec.d/passwd*
 cat <<'EOF'
 Done!
 
-NOTE: All VPN users will share the same IPsec PSK.
-  If you forgot the PSK, check /etc/ipsec.secrets.
+Note: All VPN users will share the same IPsec PSK.
+      If you forgot the PSK, check /etc/ipsec.secrets.
 
 EOF
 
